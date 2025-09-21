@@ -34,7 +34,7 @@ Oil spills pose a serious threat to marine ecosystems, coastal areas, and econom
 
 ## 🧑‍💻 How to Run the Notebook
 
-1. Open `Oil_Spill_M1_M2_M3.ipynb` in Jupyter/Colab.
+1. Open `OilSpill.ipynb` in Jupyter/Colab.
 2. Update `BASE_DIR` with your dataset path.
 3. Run cells for preprocessing, training, and visualization.
 
