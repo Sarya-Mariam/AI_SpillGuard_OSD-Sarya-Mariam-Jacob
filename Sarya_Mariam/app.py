@@ -38,7 +38,7 @@ def preprocess_image(img: Image.Image):
     return arr
 
 st.title("🌊 AI SpillGuard – Oil Spill Detection")
-st.write("Upload a satellite image to detect oil spill regions using a trained U-Net model.")
+st.write("Upload a satellite image to detect oil spill regions using a trained Dual Head U-Net model.")
 
 uploaded_file = st.file_uploader("Upload a satellite image", type=["jpg","jpeg","png","tif"])
 
@@ -75,6 +75,7 @@ if uploaded_file is not None:
         cv2.applyColorMap((pred_bin*255).astype("uint8"), cv2.COLORMAP_JET), 0.3, 0
     )
     st.image(overlay, caption="Predicted Oil Spill Regions", use_container_width=True)
+
 
 
 
