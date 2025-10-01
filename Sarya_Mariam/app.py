@@ -7,7 +7,7 @@ import gdown
 import os
 import zipfile
 
-GOOGLE_DRIVE_ID = "1k-5vuKHInd1ClXz2Mql8Z_UGjtbYbAxg"  # your actual file ID
+GOOGLE_DRIVE_ID = "1Uv_V6veGzL-wiVmbtwWVCyacRnzJpUCu"  # your actual file ID
 MODEL_PATH = None  # will be detected automatically
 
 # Download and extract model if not already present
@@ -75,6 +75,7 @@ if uploaded_file is not None:
         cv2.applyColorMap((pred_bin*255).astype("uint8"), cv2.COLORMAP_JET), 0.3, 0
     )
     st.image(overlay, caption="Predicted Oil Spill Regions", use_container_width=True)
+
 
 
 
