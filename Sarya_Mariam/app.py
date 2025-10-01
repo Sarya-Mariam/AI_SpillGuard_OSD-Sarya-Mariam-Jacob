@@ -70,11 +70,21 @@ if uploaded_file is not None:
         st.info("✅ No Oil Spill Detected")
 
     # Overlay visualization
-    overlay = cv2.addWeighted(
-        np.array(image.resize((IMG_SIZE, IMG_SIZE))), 0.7,
-        cv2.applyColorMap((pred_bin*255).astype("uint8"), cv2.COLORMAP_JET), 0.3, 0
-    )
-    st.image(overlay, caption="Predicted Oil Spill Regions", use_container_width=True)
+   # Convert PIL RGB to OpenCV BGR
+img_bgr = cv2.cvtColor(np.array(image.resize((IMG_SIZE, IMG_SIZE))), cv2.COLOR_RGB2BGR)
+
+# Generate color mask
+mask_color = cv2.applyColorMap((pred_bin*255).astype("uint8"), cv2.COLORMAP_JET)
+
+# Blend them
+overlay = cv2.addWeighted(img_bgr, 0.7, mask_color, 0.3, 0)
+
+# Convert back to RGB for Streamlit display
+overlay = cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB)
+
+st.image(overlay, caption="Predicted Oil Spill Regions", use_container_width=True)
+
+
 
 
 
