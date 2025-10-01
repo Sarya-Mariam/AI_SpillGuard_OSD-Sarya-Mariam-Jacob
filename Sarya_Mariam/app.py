@@ -71,18 +71,31 @@ if uploaded_file is not None:
 
     # Overlay visualization
    # Convert PIL RGB to OpenCV BGR
-img_bgr = cv2.cvtColor(np.array(image.resize((IMG_SIZE, IMG_SIZE))), cv2.COLOR_RGB2BGR)
+    # Convert PIL image to OpenCV BGR, ensure uint8
+img_bgr = cv2.cvtColor(
+    np.array(image.resize((IMG_SIZE, IMG_SIZE)), dtype=np.uint8),
+    cv2.COLOR_RGB2BGR
+)
 
-# Generate color mask
-mask_color = cv2.applyColorMap((pred_bin*255).astype("uint8"), cv2.COLORMAP_JET)
+# Ensure pred_bin is uint8 (0 or 255)
+mask = (pred_bin * 255).astype("uint8")
 
-# Blend them
+# Convert mask to color (3 channels, BGR)
+mask_color = cv2.applyColorMap(mask, cv2.COLORMAP_JET)
+
+# Make sure both arrays match shape and dtype
+if img_bgr.shape != mask_color.shape:
+    mask_color = cv2.resize(mask_color, (img_bgr.shape[1], img_bgr.shape[0]))
+
+# Blend them safely
 overlay = cv2.addWeighted(img_bgr, 0.7, mask_color, 0.3, 0)
 
-# Convert back to RGB for Streamlit display
+# Convert back to RGB for Streamlit
 overlay = cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB)
 
 st.image(overlay, caption="Predicted Oil Spill Regions", use_container_width=True)
+
+
 
 
 
