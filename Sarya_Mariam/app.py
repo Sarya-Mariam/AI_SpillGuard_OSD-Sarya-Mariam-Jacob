@@ -7,8 +7,8 @@ import gdown
 import os
 import zipfile
 
-GOOGLE_DRIVE_ID = "1k-5vuKHInd1ClXz2Mql8Z_UGjtbYbAxg"  # your actual file ID
-MODEL_PATH = None  # will be detected automatically
+GOOGLE_DRIVE_ID = "1k-5vuKHInd1ClXz2Mql8Z_UGjtbYbAxg"
+MODEL_PATH = None  
 
 # Download and extract model if not already present
 if not any(f.endswith(".h5") for f in os.listdir(".")):
@@ -18,7 +18,7 @@ if not any(f.endswith(".h5") for f in os.listdir(".")):
     with zipfile.ZipFile("dual_head_model.zip", 'r') as zip_ref:
         zip_ref.extractall(".")
 
-# Find the first .h5 file in the current directory
+# Find the first .h5 file
 for file in os.listdir("."):
     if file.endswith(".h5"):
         MODEL_PATH = file
@@ -27,7 +27,7 @@ for file in os.listdir("."):
 if MODEL_PATH is None:
     raise FileNotFoundError("No .h5 model file found after extraction!")
 
-# Load trained model
+# Load model
 model = tf.keras.models.load_model(MODEL_PATH, compile=False)
 
 IMG_SIZE = 256
@@ -40,36 +40,36 @@ def preprocess_image(img: Image.Image):
 st.title("🌊 AI SpillGuard – Oil Spill Detection")
 st.write("Upload a satellite image to detect oil spill regions using a trained Dual Head U-Net model.")
 
+# --- 🔧 Adjustable parameters ---
+conf_thresh = st.sidebar.slider("Confidence Threshold", 0.0, 1.0, 0.6, 0.05)
+area_thresh = st.sidebar.slider("Spill Area Threshold (%)", 0.0, 20.0, 5.0, 0.5)
+
 uploaded_file = st.file_uploader("Upload a satellite image", type=["jpg","jpeg","png","tif"])
 
 if uploaded_file is not None:
     image = Image.open(uploaded_file).convert("RGB")
     st.image(image, caption="Uploaded Image", use_container_width=True)
 
-    # Preprocess
     arr = preprocess_image(image)
-
-    # Predict segmentation mask
     pred = model.predict(np.expand_dims(arr, 0))[0]
 
-    # Step 1: Apply looser confidence threshold
-    pred_bin = (pred[:,:,0] > 0.4).astype("uint8")
+    # Apply threshold from slider
+    pred_bin = (pred[:,:,0] > conf_thresh).astype("uint8")
 
-    # Step 2: Morphological filtering to remove noise
+    # Morphological filtering
     kernel = np.ones((3,3), np.uint8)
     pred_bin = cv2.morphologyEx(pred_bin, cv2.MORPH_OPEN, kernel)
     pred_bin = cv2.morphologyEx(pred_bin, cv2.MORPH_CLOSE, kernel)
 
-    # Step 3: Decide oil spill vs no spill
+    # Compute spill ratio
     spill_ratio = np.sum(pred_bin) / pred_bin.size
-    THRESHOLD = 0.01  # 1% threshold
 
-    if spill_ratio > THRESHOLD:
-        st.success(f"🌊 Oil Spill Detected! (covering ~{spill_ratio*100:.2f}% of image)")
+    if spill_ratio > (area_thresh / 100.0):
+        st.success(f"🌊 Oil Spill Detected! (~{spill_ratio*100:.2f}% of image)")
     else:
         st.info("✅ No Oil Spill Detected")
 
-    # Debug heatmap (no matplotlib needed)
+    # Debug heatmap
     st.subheader("Model Output Heatmap")
     heatmap = (pred[:,:,0] * 255).astype("uint8")
     st.image(heatmap, caption="Raw Prediction Probabilities", use_container_width=True, channels="GRAY")
@@ -79,7 +79,6 @@ if uploaded_file is not None:
         np.array(image.resize((IMG_SIZE, IMG_SIZE)), dtype=np.uint8),
         cv2.COLOR_RGB2BGR
     )
-
     mask = (pred_bin * 255).astype("uint8")
     mask_color = cv2.applyColorMap(mask, cv2.COLORMAP_JET)
 
@@ -90,6 +89,7 @@ if uploaded_file is not None:
     overlay = cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB)
 
     st.image(overlay, caption="Predicted Oil Spill Regions", use_container_width=True)
+
 
 
 
