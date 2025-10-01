@@ -7,7 +7,7 @@ import gdown
 import os
 import zipfile
 
-GOOGLE_DRIVE_ID = "1Uv_V6veGzL-wiVmbtwWVCyacRnzJpUCu"  # your actual file ID
+GOOGLE_DRIVE_ID = "1k-5vuKHInd1ClXz2Mql8Z_UGjtbYbAxg"  # your actual file ID
 MODEL_PATH = None  # will be detected automatically
 
 # Download and extract model if not already present
@@ -94,6 +94,7 @@ overlay = cv2.addWeighted(img_bgr, 0.7, mask_color, 0.3, 0)
 overlay = cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB)
 
 st.image(overlay, caption="Predicted Oil Spill Regions", use_container_width=True)
+
 
 
 
