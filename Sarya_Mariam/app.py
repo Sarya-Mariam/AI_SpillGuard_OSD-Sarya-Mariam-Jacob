@@ -6,7 +6,6 @@ from PIL import Image
 import gdown
 import os
 import zipfile
-import matplotlib.pyplot as plt
 
 GOOGLE_DRIVE_ID = "1k-5vuKHInd1ClXz2Mql8Z_UGjtbYbAxg"  # your actual file ID
 MODEL_PATH = None  # will be detected automatically
@@ -53,7 +52,7 @@ if uploaded_file is not None:
     # Predict segmentation mask
     pred = model.predict(np.expand_dims(arr, 0))[0]
 
-    # Step 1: Apply looser confidence threshold (was 0.7 → now 0.4)
+    # Step 1: Apply looser confidence threshold
     pred_bin = (pred[:,:,0] > 0.4).astype("uint8")
 
     # Step 2: Morphological filtering to remove noise
@@ -61,18 +60,19 @@ if uploaded_file is not None:
     pred_bin = cv2.morphologyEx(pred_bin, cv2.MORPH_OPEN, kernel)
     pred_bin = cv2.morphologyEx(pred_bin, cv2.MORPH_CLOSE, kernel)
 
-    # Step 3: Decide oil spill vs no spill (was 5% → now 1%)
+    # Step 3: Decide oil spill vs no spill
     spill_ratio = np.sum(pred_bin) / pred_bin.size
-    THRESHOLD = 0.01  
+    THRESHOLD = 0.01  # 1% threshold
 
     if spill_ratio > THRESHOLD:
         st.success(f"🌊 Oil Spill Detected! (covering ~{spill_ratio*100:.2f}% of image)")
     else:
         st.info("✅ No Oil Spill Detected")
 
-    # Debug heatmap of raw probabilities
+    # Debug heatmap (no matplotlib needed)
     st.subheader("Model Output Heatmap")
-    st.image(pred[:,:,0], caption="Raw Prediction Probabilities", use_container_width=True, channels="GRAY")
+    heatmap = (pred[:,:,0] * 255).astype("uint8")
+    st.image(heatmap, caption="Raw Prediction Probabilities", use_container_width=True, channels="GRAY")
 
     # Overlay visualization
     img_bgr = cv2.cvtColor(
@@ -90,6 +90,8 @@ if uploaded_file is not None:
     overlay = cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB)
 
     st.image(overlay, caption="Predicted Oil Spill Regions", use_container_width=True)
+
+
 
 
 
