@@ -6,6 +6,7 @@ from PIL import Image
 import gdown
 import os
 import zipfile
+import matplotlib.pyplot as plt
 
 GOOGLE_DRIVE_ID = "1k-5vuKHInd1ClXz2Mql8Z_UGjtbYbAxg"  # your actual file ID
 MODEL_PATH = None  # will be detected automatically
@@ -52,48 +53,44 @@ if uploaded_file is not None:
     # Predict segmentation mask
     pred = model.predict(np.expand_dims(arr, 0))[0]
 
-    # Step 1: Apply stricter confidence threshold
-    pred_bin = (pred[:,:,0] > 0.7).astype("uint8")
+    # Step 1: Apply looser confidence threshold (was 0.7 → now 0.4)
+    pred_bin = (pred[:,:,0] > 0.4).astype("uint8")
 
     # Step 2: Morphological filtering to remove noise
     kernel = np.ones((3,3), np.uint8)
     pred_bin = cv2.morphologyEx(pred_bin, cv2.MORPH_OPEN, kernel)
     pred_bin = cv2.morphologyEx(pred_bin, cv2.MORPH_CLOSE, kernel)
 
-    # Step 3: Decide oil spill vs no spill
+    # Step 3: Decide oil spill vs no spill (was 5% → now 1%)
     spill_ratio = np.sum(pred_bin) / pred_bin.size
-    THRESHOLD = 0.05  # Require at least 5% of pixels to be spill
+    THRESHOLD = 0.01  
 
     if spill_ratio > THRESHOLD:
         st.success(f"🌊 Oil Spill Detected! (covering ~{spill_ratio*100:.2f}% of image)")
     else:
         st.info("✅ No Oil Spill Detected")
 
+    # Debug heatmap of raw probabilities
+    st.subheader("Model Output Heatmap")
+    st.image(pred[:,:,0], caption="Raw Prediction Probabilities", use_container_width=True, channels="GRAY")
+
     # Overlay visualization
-   # Convert PIL RGB to OpenCV BGR
-    # Convert PIL image to OpenCV BGR, ensure uint8
-img_bgr = cv2.cvtColor(
-    np.array(image.resize((IMG_SIZE, IMG_SIZE)), dtype=np.uint8),
-    cv2.COLOR_RGB2BGR
-)
+    img_bgr = cv2.cvtColor(
+        np.array(image.resize((IMG_SIZE, IMG_SIZE)), dtype=np.uint8),
+        cv2.COLOR_RGB2BGR
+    )
 
-# Ensure pred_bin is uint8 (0 or 255)
-mask = (pred_bin * 255).astype("uint8")
+    mask = (pred_bin * 255).astype("uint8")
+    mask_color = cv2.applyColorMap(mask, cv2.COLORMAP_JET)
 
-# Convert mask to color (3 channels, BGR)
-mask_color = cv2.applyColorMap(mask, cv2.COLORMAP_JET)
+    if img_bgr.shape != mask_color.shape:
+        mask_color = cv2.resize(mask_color, (img_bgr.shape[1], img_bgr.shape[0]))
 
-# Make sure both arrays match shape and dtype
-if img_bgr.shape != mask_color.shape:
-    mask_color = cv2.resize(mask_color, (img_bgr.shape[1], img_bgr.shape[0]))
+    overlay = cv2.addWeighted(img_bgr, 0.7, mask_color, 0.3, 0)
+    overlay = cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB)
 
-# Blend them safely
-overlay = cv2.addWeighted(img_bgr, 0.7, mask_color, 0.3, 0)
+    st.image(overlay, caption="Predicted Oil Spill Regions", use_container_width=True)
 
-# Convert back to RGB for Streamlit
-overlay = cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB)
-
-st.image(overlay, caption="Predicted Oil Spill Regions", use_container_width=True)
 
 
 
