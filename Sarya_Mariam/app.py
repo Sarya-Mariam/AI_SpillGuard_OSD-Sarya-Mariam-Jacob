@@ -1,122 +1,294 @@
-import streamlit as st
-import numpy as np
-import cv2
-import tensorflow as tf
-from PIL import Image
-import gdown
+ # Streamlit app for DeepLabV3+ Oil Spill Detection
+# This app uses a dual-head DeepLabV3+ model for classification and segmentation
+
 import os
+import io
 import zipfile
+from pathlib import Path
 
-GOOGLE_DRIVE_ID = "1k-5vuKHInd1ClXz2Mql8Z_UGjtbYbAxg"
-MODEL_PATH = None  
+import numpy as np
+from PIL import Image, ImageOps
+import streamlit as st
+import gdown
+from tensorflow import keras
 
-# Download and extract model if not already present
-if not any(f.endswith(".h5") for f in os.listdir(".")):
-    url = f"https://drive.google.com/uc?id={GOOGLE_DRIVE_ID}"
-    gdown.download(url, "dual_head_model.zip", quiet=False)
+st.set_page_config(layout="wide", page_title="Oil Spill Detector - DeepLabV3+")
 
-    with zipfile.ZipFile("dual_head_model.zip", 'r') as zip_ref:
-        zip_ref.extractall(".")
+st.title("🛢️ Oil Spill Detector — DeepLabV3+")
+st.write("Upload a satellite/aerial image to detect and segment oil spills using state-of-the-art deep learning.")
 
-# Find the first .h5 file
-for file in os.listdir("."):
-    if file.endswith(".h5"):
-        MODEL_PATH = file
-        break
+# Configuration
+IMG_SIZE = 256
+MODEL_PATH = "models/deeplabv3_oil_spill.h5"
+GOOGLE_DRIVE_URL = "https://drive.google.com/uc?id=1jf6OW-jDqKgNGLkYJttNUd_yTo4GvlV3"
 
-if MODEL_PATH is None:
-    raise FileNotFoundError("No .h5 model file found after extraction!")
+# Download model if not present
+if not os.path.exists(MODEL_PATH):
+    st.info("📥 Model not found locally. Downloading from Google Drive...")
+    os.makedirs("models", exist_ok=True)
+    try:
+        gdown.download(GOOGLE_DRIVE_URL, MODEL_PATH, quiet=False, fuzzy=True)
+        st.success("✅ Model downloaded successfully!")
+    except Exception as e:
+        st.error(f"Failed to download model: {e}")
+        st.info("Please upload your model file manually or update the GOOGLE_DRIVE_URL")
 
 # Load model
-model = tf.keras.models.load_model(MODEL_PATH, compile=False)
+@st.cache_resource
+def load_model(path: str):
+    """Load the DeepLabV3+ model"""
+    try:
+        # Load model without custom objects
+        model = keras.models.load_model(path, compile=False)
+        st.success("✅ Model loaded successfully!")
+        return model
+    except Exception as e:
+        st.error(f"❌ Failed to load model: {e}")
+        return None
 
-IMG_SIZE = 256
+model_obj = load_model(MODEL_PATH) if os.path.exists(MODEL_PATH) else None
 
-def preprocess_image(img: Image.Image):
-    img = img.resize((IMG_SIZE, IMG_SIZE))
-    arr = np.array(img).astype("float32") / 255.0
-    return arr
+# Preprocessing
+def preprocess_image(img: Image.Image, size: int):
+    """Preprocess image for model input"""
+    img = img.convert('RGB')
+    img = ImageOps.fit(img, (size, size), Image.BILINEAR)
+    arr = np.array(img).astype(np.float32) / 255.0
+    return arr, np.expand_dims(arr, 0)
 
-st.title("🌊 AI SpillGuard – Oil Spill Detection")
-st.write("Upload a satellite image to detect oil spill regions using a trained Dual Head U-Net model.")
+def postprocess_mask(mask: np.ndarray, target_size, threshold=0.5):
+    """Process segmentation mask to match original image size"""
+    # Remove batch and channel dimensions
+    if mask.ndim == 4:
+        mask = mask[0]
+    if mask.ndim == 3 and mask.shape[-1] == 1:
+        mask = mask[..., 0]
+    
+    # Ensure 2D
+    if mask.ndim != 2:
+        st.error(f"Unexpected mask shape: {mask.shape}")
+        return np.zeros((target_size[1], target_size[0]), dtype=np.uint8)
+    
+    # Normalize to [0, 1]
+    if mask.max() > 1:
+        mask = mask / 255.0
+    
+    # Resize to original size
+    mask_img = Image.fromarray((mask * 255).astype(np.uint8))
+    mask_resized = mask_img.resize(target_size, resample=Image.BILINEAR)
+    
+    # Threshold
+    mask_arr = np.array(mask_resized).astype(np.float32) / 255.0
+    binary_mask = (mask_arr >= threshold).astype(np.uint8)
+    
+    return binary_mask
 
-# --- 🔧 Adjustable parameters ---
-conf_thresh = st.sidebar.slider("Confidence Threshold", 0.0, 1.0, 0.6, 0.05)
-area_thresh = st.sidebar.slider("Spill Area Threshold (%)", 0.0, 20.0, 5.0, 0.5)
-
-uploaded_file = st.file_uploader("Upload a satellite image", type=["jpg","jpeg","png","tif"])
-
-if uploaded_file is not None:
-    image = Image.open(uploaded_file).convert("RGB")
-    st.image(image, caption="Uploaded Image", use_container_width=True)
-
-    arr = preprocess_image(image)
-    pred = model.predict(np.expand_dims(arr, 0))[0]
-
-    # Apply threshold from slider
-    pred_bin = (pred[:,:,0] > conf_thresh).astype("uint8")
-
-    # Morphological filtering
-    kernel = np.ones((3,3), np.uint8)
-    pred_bin = cv2.morphologyEx(pred_bin, cv2.MORPH_OPEN, kernel)
-    pred_bin = cv2.morphologyEx(pred_bin, cv2.MORPH_CLOSE, kernel)
-
-    # Compute spill ratio
-    spill_ratio = np.sum(pred_bin) / pred_bin.size
-
-    if spill_ratio > (area_thresh / 100.0):
-        st.success(f"🌊 Oil Spill Detected! (~{spill_ratio*100:.2f}% of image)")
+def predict(model, image: Image.Image, size: int):
+    """Run inference on image"""
+    _, img_tensor = preprocess_image(image, size)
+    
+    # Get predictions
+    predictions = model.predict(img_tensor, verbose=0)
+    
+    # Parse outputs
+    if isinstance(predictions, (list, tuple)) and len(predictions) == 2:
+        seg_mask, classification = predictions
+        class_prob = float(np.squeeze(classification))
     else:
-        st.info("✅ No Oil Spill Detected")
+        # Fallback if single output
+        seg_mask = predictions
+        class_prob = None
+    
+    return class_prob, seg_mask
 
-    # Debug heatmap
-    st.subheader("Model Output Heatmap")
-    heatmap = (pred[:,:,0] * 255).astype("uint8")
-    st.image(heatmap, caption="Raw Prediction Probabilities", use_container_width=True, channels="GRAY")
+# Sidebar settings
+st.sidebar.header("⚙️ Settings")
+threshold = st.sidebar.slider(
+    "Segmentation Threshold", 
+    0.0, 1.0, 0.5, 0.05,
+    help="Higher threshold = less sensitive (fewer false positives)"
+)
 
-    # Overlay visualization
-    img_bgr = cv2.cvtColor(
-        np.array(image.resize((IMG_SIZE, IMG_SIZE)), dtype=np.uint8),
-        cv2.COLOR_RGB2BGR
-    )
-    mask = (pred_bin * 255).astype("uint8")
-    mask_color = cv2.applyColorMap(mask, cv2.COLORMAP_JET)
+opacity = st.sidebar.slider(
+    "Overlay Opacity",
+    0, 255, 120, 5,
+    help="Transparency of red overlay on detected oil"
+)
 
-    if img_bgr.shape != mask_color.shape:
-        mask_color = cv2.resize(mask_color, (img_bgr.shape[1], img_bgr.shape[0]))
+show_confidence = st.sidebar.checkbox("Show confidence heatmap", value=False)
 
-    overlay = cv2.addWeighted(img_bgr, 0.7, mask_color, 0.3, 0)
-    overlay = cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB)
+# File uploader
+st.header("📤 Upload Image")
+uploaded_file = st.file_uploader(
+    "Choose a satellite or aerial image",
+    type=['jpg', 'jpeg', 'png', 'tif', 'tiff'],
+    help="Supported formats: JPG, PNG, TIFF"
+)
 
-    st.image(overlay, caption="Predicted Oil Spill Regions", use_container_width=True)
+# Main layout
+col1, col2 = st.columns([1, 1])
 
+if uploaded_file:
+    # Load image
+    pil_image = Image.open(uploaded_file)
+    
+    with col1:
+        st.subheader("📷 Input Image")
+        st.image(pil_image, use_container_width=True)
+        st.caption(f"Size: {pil_image.size[0]} × {pil_image.size[1]} pixels")
+    
+    if model_obj is None:
+        st.error("⚠️ Model not loaded. Please check the model path.")
+    else:
+        with st.spinner("🔍 Analyzing image..."):
+            try:
+                # Run prediction
+                class_prob, seg_mask = predict(model_obj, pil_image, IMG_SIZE)
+                
+                # Process segmentation mask
+                binary_mask = postprocess_mask(seg_mask, pil_image.size, threshold)
+                
+            except Exception as e:
+                st.error(f"❌ Prediction failed: {e}")
+                import traceback
+                st.code(traceback.format_exc())
+                class_prob, binary_mask = None, None
+        
+        with col2:
+            st.subheader("📊 Results")
+            
+            # Classification results
+            if class_prob is not None:
+                col_a, col_b = st.columns([1, 1])
+                
+                with col_a:
+                    st.metric("🎯 Oil Spill Probability", f"{class_prob*100:.1f}%")
+                
+                with col_b:
+                    if class_prob >= 0.5:
+                        st.error("⚠️ **OIL SPILL DETECTED**")
+                    else:
+                        st.success("✅ **NO OIL SPILL**")
+            else:
+                st.warning("⚠️ Classification unavailable")
+            
+            # Segmentation results
+            if binary_mask is not None:
+                # Calculate statistics
+                total_pixels = binary_mask.size
+                oil_pixels = binary_mask.sum()
+                coverage_pct = (oil_pixels / total_pixels) * 100
+                
+                st.metric("🔴 Detected Oil Coverage", f"{coverage_pct:.2f}%")
+                
+                if oil_pixels > 0:
+                    st.metric("📍 Affected Pixels", f"{oil_pixels:,} / {total_pixels:,}")
+                
+                # Visualization tabs
+                tab1, tab2, tab3 = st.tabs(["🎨 Overlay", "⬛ Binary Mask", "🌡️ Heatmap"])
+                
+                with tab1:
+                    # Create overlay
+                    overlay = pil_image.convert('RGBA')
+                    mask_img = Image.fromarray((binary_mask * 255).astype('uint8')).convert('L')
+                    color_mask = Image.new('RGBA', pil_image.size, (255, 0, 0, opacity))
+                    overlay.paste(color_mask, (0, 0), mask_img)
+                    
+                    st.image(overlay, caption='Red overlay = detected oil spill', use_container_width=True)
+                
+                with tab2:
+                    # Inverted binary mask (black = oil)
+                    inverted = (1 - binary_mask) * 255
+                    st.image(inverted, caption='Black = oil spill, White = clean water', use_container_width=True)
+                
+                with tab3:
+                    # Show confidence heatmap
+                    if show_confidence and seg_mask is not None:
+                        confidence_map = np.squeeze(seg_mask[0])
+                        if confidence_map.max() > 1:
+                            confidence_map = confidence_map / 255.0
+                        
+                        # Resize to original
+                        conf_img = Image.fromarray((confidence_map * 255).astype(np.uint8))
+                        conf_resized = conf_img.resize(pil_image.size, Image.BILINEAR)
+                        
+                        st.image(conf_resized, caption='Confidence map (brighter = higher confidence)', use_container_width=True)
+                    else:
+                        st.info("Enable 'Show confidence heatmap' in sidebar")
+                
+                # Download section
+                st.markdown("---")
+                st.subheader("💾 Download Results")
+                
+                col_dl1, col_dl2 = st.columns(2)
+                
+                with col_dl1:
+                    # Download overlay
+                    buf_overlay = io.BytesIO()
+                    overlay.save(buf_overlay, format='PNG')
+                    buf_overlay.seek(0)
+                    st.download_button(
+                        '📥 Download Overlay',
+                        data=buf_overlay,
+                        file_name='oil_spill_overlay.png',
+                        mime='image/png',
+                        use_container_width=True
+                    )
+                
+                with col_dl2:
+                    # Download binary mask
+                    buf_mask = io.BytesIO()
+                    Image.fromarray(inverted.astype('uint8')).save(buf_mask, format='PNG')
+                    buf_mask.seek(0)
+                    st.download_button(
+                        '📥 Download Mask',
+                        data=buf_mask,
+                        file_name='oil_spill_mask.png',
+                        mime='image/png',
+                        use_container_width=True
+                    )
+            else:
+                st.warning("⚠️ Segmentation unavailable")
 
+# Information section
+st.markdown("---")
+st.subheader("ℹ️ About")
 
+with st.expander("📖 How it works"):
+    st.markdown("""
+    This application uses **DeepLabV3+**, a state-of-the-art semantic segmentation model, combined with 
+    a classification head to detect and segment oil spills in satellite/aerial imagery.
+    
+    **Model Architecture:**
+    - **Backbone**: ResNet50 (pre-trained on ImageNet)
+    - **Decoder**: DeepLabV3+ with ASPP (Atrous Spatial Pyramid Pooling)
+    - **Dual Outputs**: 
+        1. Binary classification (oil spill present/absent)
+        2. Pixel-wise segmentation mask
+    
+    **Input**: RGB images (automatically resized to 256×256)
+    
+    **Output**: 
+    - Classification probability
+    - Segmentation mask highlighting oil-affected regions
+    """)
 
+with st.expander("🎯 Tips for best results"):
+    st.markdown("""
+    - **Image quality**: Higher resolution images generally give better results
+    - **Threshold adjustment**: 
+        - Lower threshold (0.3-0.4): More sensitive, may include false positives
+        - Higher threshold (0.6-0.7): More conservative, may miss small spills
+    - **Interpretation**: The model highlights areas with high probability of oil contamination
+    - **Limitations**: Performance may vary with different lighting conditions, weather, and image sources
+    """)
 
+with st.expander("⚙️ Model Details"):
+    if model_obj:
+        st.write(f"**Total Parameters**: {model_obj.count_params():,}")
+        st.write(f"**Input Shape**: {IMG_SIZE} × {IMG_SIZE} × 3")
+        st.write(f"**Framework**: TensorFlow/Keras + Segmentation Models")
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+st.markdown("---")
+st.caption("🛢️ Oil Spill Detection System | Powered by DeepLabV3+ | TensorFlow/Keras")
 
